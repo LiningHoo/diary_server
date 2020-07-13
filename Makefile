@@ -3,4 +3,3 @@ main: main.cpp
 
 clean: 
 	if [ -e start_server ]; then rm start_server; fi
-
