@@ -9,11 +9,14 @@
 #include "ormpp/dbng.hpp"
 #include "ormpp/mysql.hpp"
 #include "ormpp/entity.hpp"
+#include "gmp/gmpxx.h"
 #include "diary.hpp"
+#include "account.hpp"
 #include "string"
 #include "sys/stat.h"
 #include "sys/types.h"
 #include "dirent.h"
+#include "sstream"
 
 
 class DiaryServer {
@@ -81,7 +84,36 @@ public:
             int ret = mysql.insert(temp);
             mysql.commit();
             // 返回结果
-            res.set_content(image_url, "text/plain");
+            if(ret==1) {
+                res.set_content("ok", "text/plain");
+            } else {
+                res.set_content("failed", "text/plain");
+            }
+        });
+
+        // 删除日记
+        svr.Post("/delete_diary", [&](const httplib::Request& req, httplib::Response& res) {
+            // JSON 解析
+            rapidjson::Document diaryJson;
+            diaryJson.Parse(req.body.c_str());
+            // 获取post参数
+            std::string openid = diaryJson["openid"].GetString();
+            std::string id = std::to_string(diaryJson["id"].GetInt());
+            // 查询数据库
+            std::string condition = "where openid='"+openid+"' and id="+id;
+            auto item = mysql.query<diary>(condition).at(0);
+            // 更改日记状态
+            item.is_delete = 1;
+            // 更新数据库
+            mysql.begin();
+            int ret = mysql.update(item);
+            mysql.commit();
+            // 返回数据
+            if(ret==1) {
+                res.set_content("ok", "text/plain");
+            } else {
+                res.set_content("failed", "text/plain");
+            }
         });
 
         // 加载openid对应的日记概览
@@ -105,6 +137,35 @@ public:
                 writer.String(diary.cover_img_url.c_str());
                 // book
                 writer.Key("book");
+                writer.String(diary.title.c_str());
+                writer.EndObject();
+            }
+            writer.EndArray();
+            // 返回json列表
+            res.set_content(strBuffer.GetString(), "application/json");
+        });
+
+        // 加载废纸篓
+        svr.Get("/load_discarded_diaries", [&](const httplib::Request& req, httplib::Response& res) {
+            // 获取openid
+            std::string openid = req.get_param_value("openid");
+            // mysql 查询
+            std::string condition = "where openid='" + openid + "'" + " and is_delete=1";
+            const auto &result = mysql.query<diary>(condition.c_str());
+            // 创建json列表
+            rapidjson::StringBuffer strBuffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(strBuffer);
+            writer.StartArray();
+            for(const auto &diary: result) {
+                writer.StartObject();
+                // id
+                writer.Key("id");
+                writer.Int(diary.id);
+                // url
+                writer.Key("picture");
+                writer.String(diary.cover_img_url.c_str());
+                // book
+                writer.Key("title");
                 writer.String(diary.title.c_str());
                 writer.EndObject();
             }
@@ -139,6 +200,103 @@ public:
             res.set_content(strBuffer.GetString(), "application/json");
         });
 
+        // 记账
+        svr.Post("/write_account", [&](const httplib::Request& req, httplib::Response& res) {
+            // JSON 解析
+            rapidjson::Document accountJson;
+            accountJson.Parse(req.body.c_str());
+            // 获取post参数
+            std::string openid = accountJson["openid"].GetString();
+            std::string title = accountJson["title"].GetString();
+            std::string type = accountJson["type"].GetString();
+            std::string money = accountJson["money"].GetString();
+            std::string date = accountJson["date"].GetString();
+            std::string time = accountJson["time"].GetString();
+            // 创建对象
+            int64_t accountId = (int64_t)mysql.query<account>().size();
+            account temp = {accountId, 
+                                openid, title, type, money, date, time};
+            // 插入数据表
+            mysql.begin();
+            int ret = mysql.insert(temp);
+            mysql.commit();
+            // 返回结果
+            if(ret==1) {
+                res.set_content("ok", "text/plain");
+            } else {
+                res.set_content("failed", "text/plain");
+            }
+        });
+
+        // 今日收支
+        svr.Get("/today_accounts", [&](const httplib::Request& req, httplib::Response& res) {
+            // 获取openid
+            std::string openid = req.get_param_value("openid");
+            std::string date = req.get_param_value("date");
+            // 数据库中查询
+            std::string condition = 
+                "where openid='"+openid+"' and date='"+date+"'";
+            const auto &today_accounts = 
+                mysql.query<account>(condition);
+            // 计算收入和支出
+            mpf_class income, outcome;
+            income = 0; outcome = 0;
+            for(const auto& account: today_accounts) {
+                mpf_class temp;
+                temp = account.money.c_str();
+                if(account.type=="+") {
+                    income = income + temp;
+                } else {
+                    outcome = outcome + temp;
+                }
+            }
+            // 转成json
+            rapidjson::StringBuffer strBuffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(strBuffer);
+            writer.StartObject();
+            // title
+            writer.Key("income");
+            writer.String(mpf_to_string(income).c_str());
+            // content
+            writer.Key("outcome");
+            writer.String(mpf_to_string(outcome).c_str());
+            writer.EndObject();
+            // 返回数据
+            res.set_content(strBuffer.GetString(), "application/json");
+        });
+
+        // 收支详情
+        svr.Get("/account_detail", [&](const httplib::Request& req, httplib::Response& res) {
+            // 获取openid
+            std::string openid = req.get_param_value("openid");
+            std::string date = req.get_param_value("date");
+            // 数据库中查询
+            std::string condition = 
+                "where openid='"+openid+"' and date='"+date+"'";
+            const auto &accounts = 
+                mysql.query<account>(condition);
+            // json数据
+            rapidjson::StringBuffer strBuffer;
+            rapidjson::Writer<rapidjson::StringBuffer> writer(strBuffer);
+            writer.StartArray();
+            for(const auto& account: accounts) {
+                writer.StartObject();
+                writer.Key("title");
+                writer.String(account.title.c_str());
+                writer.Key("cate");
+                writer.String(account.type.c_str());
+                writer.Key("account");
+                writer.String(account.money.c_str());
+                writer.Key("sdate");
+                std::string time = account.date+" "+account.time;
+                writer.String(time.c_str());
+                writer.EndObject();
+            }
+            writer.EndArray();
+            // 返回数据
+            res.set_content(strBuffer.GetString(), "application/json");
+        });
+
         // 停止服务
         svr.Get("/stop", [&](const httplib::Request& req, httplib::Response& res) {
             svr.stop();
@@ -153,9 +311,12 @@ public:
 
     void reset_database() {
         // drop tables
-        mysql.execute("drop table if exists diary");
+        // mysql.execute("drop table if exists diary");
+        mysql.execute("drop table if exists account");
         //create tables
-        mysql.create_datatable<diary>(ormpp_key{"id"}, 
+        // mysql.create_datatable<diary>(ormpp_key{"id"}, 
+        //                         ormpp_not_null{{"id", "openid"}});
+        mysql.create_datatable<account>(ormpp_key{"id"}, 
                                 ormpp_not_null{{"id", "openid"}});
     }
 
@@ -164,6 +325,13 @@ public:
         if((dp = opendir(path.c_str())) == NULL) {
             mkdir(path.c_str(), S_IRUSR | S_IWUSR | S_IXUSR | S_IRWXG | S_IRWXO);
         }
+    }
+
+    std::string mpf_to_string(mpf_class x) {
+        std::ostringstream oss;
+        oss << x;
+        return oss.str();
+        // return x.get_str(1);
     }
 
     void start() {
