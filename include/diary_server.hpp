@@ -329,9 +329,9 @@ public:
 
     std::string mpf_to_string(mpf_class x) {
         std::ostringstream oss;
+        oss.setf(std::ios_base::fixed ,std::ios_base::floatfield);
         oss << x;
         return oss.str();
-        // return x.get_str(1);
     }
 
     void start() {
