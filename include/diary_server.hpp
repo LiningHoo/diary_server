@@ -314,12 +314,12 @@ public:
     void reset_database() {
         // drop tables
         // mysql.execute("drop table if exists diary");
-        mysql.execute("drop table if exists account");
+        // mysql.execute("drop table if exists account");
         //create tables
         // mysql.create_datatable<diary>(ormpp_key{"id"}, 
         //                         ormpp_not_null{{"id", "openid"}});
-        mysql.create_datatable<account>(ormpp_key{"id"}, 
-                                ormpp_not_null{{"id", "openid"}});
+        // mysql.create_datatable<account>(ormpp_key{"id"}, 
+        //                         ormpp_not_null{{"id", "openid"}});
     }
 
     void create_folder(std::string path) {
